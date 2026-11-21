@@ -127,7 +127,26 @@ export const GOLD_DEEP = '#9a741f'; // the Key Art hero frame
 export const TITLE_FONT = '"Arial Black", "Arial Narrow Bold", "Liberation Sans", Arial, sans-serif';
 export const TAG_FONT = '"Arial Narrow", "Liberation Sans", Arial, sans-serif';
 
-export const DEFAULT_TAGLINE = 'LUCIA • JASON • CAL';
+export const DEFAULT_TAGLINE = 'MARA • JAX • VALENTINA';
+
+// Poster furniture (v2): every cover also carries the dressing a real
+// key-art poster has — a name tag under each panel's star, a review
+// strip with a pull-quote, a round studio seal, and the small-print
+// billing block along the bottom edge.
+export const REVIEW = {
+  stars: '★★★★★',
+  quote: 'A SUNSET YOU CAN SPEED THROUGH.',
+  source: 'THE HARBOR GAZETTE',
+};
+
+export const BILLING = [
+  'VICE HEAT STUDIO presents a NEON HARBOR PICTURES production “VICE HEAT”',
+  'MARA VOSS · JAX MORENO · VALENTINA CRUZ · SOFÍA REYES · ROXY DELGADO · ELIAS BRANDT',
+  'music by THE PALM TAPES · edited by R. OKAFOR · photography L. IBARRA · written by C. FERRANTE · directed by A. SOLANO',
+];
+
+export const SEAL_RING = 'VICE HEAT STUDIO • ORIGINAL KEY ART • ';
+export const SEAL_CENTER = 'EST. 2026';
 
 // A fresh set of panel placements for a layout: photos cycle in order, each
 // centred (pan 0, 0) at natural cover zoom. pan is stored as a fraction of

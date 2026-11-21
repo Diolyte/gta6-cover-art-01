@@ -5,7 +5,7 @@
 
 import {
   LAYOUTS, GRADES, CHROME_STOPS, INK, GOLD, GOLD_DEEP,
-  TITLE_FONT, TAG_FONT, liftedPolygon,
+  TITLE_FONT, TAG_FONT, liftedPolygon, REVIEW, BILLING, SEAL_RING, SEAL_CENTER,
 } from './design.js';
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -125,9 +125,191 @@ function captionBand(ctx, W, H, pos) {
   ctx.fillRect(0, 0, W, H);
 }
 
+// ------------------------------------------------------- poster furniture
+// The dressing a real key-art poster carries, drawn over the graded art:
+// a name tag on every panel, the review strip, the studio seal and the
+// billing block. Sizes are fractions of u = min(W, H) unless noted, and
+// tools/make_screenshots.py mirrors every number.
+
+const BILLING_FS = 0.0145; // billing type size, in u
+const BILLING_LH = 1.5;    // billing line height, in type sizes
+
+// The height the billing block reserves along the cover's bottom edge;
+// the title (when it sits at the bottom) and the seal rest above it.
+export function billingInset(W, H) {
+  const u = Math.min(W, H);
+  return BILLING_FS * BILLING_LH * BILLING.length * u + 0.016 * H;
+}
+
+function setTracking(ctx, px) {
+  try { ctx.letterSpacing = `${Math.max(0, Math.round(px))}px`; } catch { /* older engines */ }
+}
+
+// One panel's name tag: the star's name in tracked warm-white caps on a
+// soft dark plate along the panel's bottom edge, clipped to the panel so
+// slanted panels keep it inside their frame. Panels too small to carry
+// a legible tag are skipped.
+function drawNameTag(ctx, W, H, poly, name) {
+  if (!name) return;
+  const rel = bboxOf(poly);
+  const box = { x: rel.x * W, y: rel.y * H, w: rel.w * W, h: rel.h * H };
+  const u = Math.min(W, H);
+  if (box.h < 0.10 * u || box.w < 0.12 * u) return;
+  const fs = Math.min(box.h * 0.115, u * 0.024);
+  const plateH = fs * 2.0;
+  // The plate hugs the panel's bottom edge, unless that would run
+  // into the billing block's reserved strip — then it rests just
+  // above it, so a name tag never collides with the small print.
+  let plateBottom = box.y + box.h - box.h * 0.045;
+  const limit = H - billingInset(W, H) - 0.006 * H;
+  if (plateBottom > limit) plateBottom = limit;
+  const plateY = plateBottom - plateH;
+  ctx.save();
+  pathOf(ctx, poly, W, H);
+  ctx.clip();
+  const grad = ctx.createLinearGradient(0, plateY - fs * 0.7, 0, box.y + box.h);
+  grad.addColorStop(0, 'rgba(4, 4, 10, 0)');
+  grad.addColorStop(0.45, 'rgba(4, 4, 10, 0.62)');
+  grad.addColorStop(1, 'rgba(4, 4, 10, 0.80)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(box.x - 2, plateY - fs * 0.7, box.w + 4, box.h - plateY + fs * 0.7 + 2);
+  ctx.font = `700 ${fs}px ${TAG_FONT}`;
+  setTracking(ctx, fs * 0.22);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#f3e9c8';
+  ctx.fillText(name.trim().toUpperCase(), box.x + box.w / 2, plateY + fs * 1.34);
+  setTracking(ctx, 0);
+  ctx.restore();
+}
+
+// The billing block: the poster's small print — production, cast and
+// credits in tiny tracked caps, centred along the bottom edge over a
+// soft dark band that keeps it legible over bright panels.
+function drawBilling(ctx, W, H) {
+  const u = Math.min(W, H);
+  const fs = BILLING_FS * u;
+  const lh = fs * BILLING_LH;
+  const bandTop = H - billingInset(W, H) - 0.012 * H;
+  const band = ctx.createLinearGradient(0, bandTop, 0, H);
+  band.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  band.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
+  ctx.fillStyle = band;
+  ctx.fillRect(0, bandTop, W, H - bandTop);
+
+  // Shrink to fit: the longest credits line must clear the cover's
+  // width, or the small print runs off the edges of narrow covers.
+  let fit = fs;
+  const setFont = () => {
+    ctx.font = `600 ${fit}px ${TAG_FONT}`;
+    setTracking(ctx, fit * 0.14);
+  };
+  setFont();
+  const widest = Math.max(...BILLING.map((line) => ctx.measureText(line).width));
+  if (widest > W * 0.96) {
+    fit *= (W * 0.96) / widest;
+    setFont();
+  }
+  const flh = fit * BILLING_LH;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = 'rgba(238, 234, 244, 0.92)';
+  BILLING.forEach((line, i) => {
+    const base = H - 0.010 * H - (BILLING.length - 1 - i) * flh - fit * 0.22;
+    ctx.fillText(line, W / 2, base);
+  });
+  setTracking(ctx, 0);
+}
+
+// The review strip: five gold stars and one pull-quote on a slim dark
+// band. It takes the edge the caption does not: the top when the title
+// sits at the bottom, and just above the billing block when it does not.
+function drawReviewStrip(ctx, W, H, pos, inset) {
+  const u = Math.min(W, H);
+  let fs = u * 0.021;
+  const setFont = () => { ctx.font = `700 ${fs}px ${TAG_FONT}`; };
+  setFont();
+  const starsW = ctx.measureText(REVIEW.stars).width;
+  const quoteText = `  “${REVIEW.quote}” — ${REVIEW.source}`;
+  let quoteW = ctx.measureText(quoteText).width;
+  while (starsW + quoteW > W * 0.94 && fs > 8) {
+    fs *= 0.94;
+    setFont();
+    quoteW = ctx.measureText(quoteText).width;
+  }
+  const bandH = fs * 2.7;
+  const y = pos === 'bottom' ? 0.010 * H : H - inset - bandH - 0.012 * H;
+  const band = ctx.createLinearGradient(0, y, 0, y + bandH);
+  band.addColorStop(0, 'rgba(4, 4, 10, 0)');
+  band.addColorStop(0.25, 'rgba(4, 4, 10, 0.58)');
+  band.addColorStop(0.75, 'rgba(4, 4, 10, 0.58)');
+  band.addColorStop(1, 'rgba(4, 4, 10, 0)');
+  ctx.fillStyle = band;
+  ctx.fillRect(0, y, W, bandH);
+
+  const base = y + bandH / 2 + fs * 0.36;
+  const total = starsW + quoteW;
+  ctx.textBaseline = 'alphabetic';
+  setTracking(ctx, fs * 0.06);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = GOLD;
+  ctx.fillText(REVIEW.stars, W / 2 - total / 2, base);
+  ctx.fillStyle = '#f5f2ea';
+  ctx.fillText(quoteText, W / 2 - total / 2 + starsW, base);
+  setTracking(ctx, 0);
+}
+
+// The studio seal: a gold-ringed round badge resting in the bottom-right
+// corner above the billing block, its ring lettered like a film seal,
+// a star and the founding year at its centre.
+function drawSeal(ctx, W, H, inset) {
+  const u = Math.min(W, H);
+  const r = u * 0.054;
+  // Bottom-left: the right corner would sit on the narrow panels'
+  // centred name tags and clip their text.
+  const cx = r + 0.018 * u;
+  const cy = H - inset - r - 0.012 * H;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(8, 6, 16, 0.85)';
+  ctx.fill();
+  ctx.lineWidth = 0.0035 * u;
+  ctx.strokeStyle = GOLD;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.78, 0, Math.PI * 2);
+  ctx.lineWidth = 0.0016 * u;
+  ctx.stroke();
+
+  const ringFs = r * 0.205;
+  ctx.font = `700 ${ringFs}px ${TAG_FONT}`;
+  ctx.fillStyle = GOLD;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const chars = [...SEAL_RING];
+  chars.forEach((ch, i) => {
+    const a = -Math.PI / 2 + (i / chars.length) * Math.PI * 2;
+    ctx.save();
+    ctx.translate(cx + Math.cos(a) * r * 0.885, cy + Math.sin(a) * r * 0.885);
+    ctx.rotate(a + Math.PI / 2);
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+  });
+
+  ctx.fillStyle = '#f5f2ea';
+  ctx.font = `${r * 0.5}px ${TAG_FONT}`;
+  ctx.fillText('★', cx, cy - r * 0.12);
+  ctx.fillStyle = GOLD;
+  ctx.font = `700 ${r * 0.19}px ${TAG_FONT}`;
+  ctx.fillText(SEAL_CENTER, cx, cy + r * 0.40);
+  ctx.restore();
+}
+
 // The striped retro-chrome title with its 3D extrusion and dark outline,
-// plus the small gold cast line beneath it.
-function drawTitle(ctx, W, H, caption, tagline, pos) {
+// plus the small gold cast line beneath it. `inset` is the billing
+// block's reserved height: a bottom title rests above it.
+function drawTitle(ctx, W, H, caption, tagline, pos, inset = 0) {
   const text = caption.trim().toUpperCase();
   if (!text) return;
   captionBand(ctx, W, H, pos);
@@ -142,7 +324,7 @@ function drawTitle(ctx, W, H, caption, tagline, pos) {
   const hasTag = tagline.trim().length > 0;
   let base;
   if (pos === 'top') base = H * 0.035 + size * 0.92;
-  else base = H * 0.965 - (hasTag ? size * 0.5 : size * 0.16);
+  else base = H * 0.965 - inset - (hasTag ? size * 0.5 : size * 0.16);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -177,8 +359,9 @@ function drawTitle(ctx, W, H, caption, tagline, pos) {
 }
 
 // Paint the whole cover. scene.panels carry resolved images ({img, panX,
-// panY, zoom} or {img: null}); options.selected, when >= 0, outlines that
-// panel for the editor and is never set for exports or shot mode.
+// panY, zoom, name} or {img: null}) — name is the panel star's name tag,
+// empty when the panel has none. options.selected, when >= 0, outlines
+// that panel for the editor and is never set for exports or shot mode.
 export function drawCover(ctx, W, H, scene, options = {}) {
   const layout = LAYOUTS[scene.layoutId];
   const grade = GRADES[scene.gradeId];
@@ -216,7 +399,17 @@ export function drawCover(ctx, W, H, scene, options = {}) {
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, W, H);
 
-  drawTitle(ctx, W, H, scene.caption, scene.tagline, scene.captionPos);
+  // poster furniture over the graded art: name tags, billing block,
+  // review strip and seal, then the title above them all
+  const inset = billingInset(W, H);
+  layout.panels.forEach((poly, i) => {
+    drawNameTag(ctx, W, H, poly, scene.panels[i] ? scene.panels[i].name : '');
+  });
+  drawBilling(ctx, W, H);
+  drawReviewStrip(ctx, W, H, scene.captionPos, inset);
+  drawSeal(ctx, W, H, inset);
+
+  drawTitle(ctx, W, H, scene.caption, scene.tagline, scene.captionPos, inset);
 
   const selected = options.selected ?? -1;
   if (selected >= 0 && layout.panels[selected]) {

@@ -25,24 +25,28 @@ export function shotScene(query) {
   };
 }
 
-// Per-panel focal fixes for the cover shot scenes, keyed by layout and
-// panel index: { panX, panY, zoom } in render.js's placement terms.
-// The wide panels' centred crop slices the Boulevard portrait through
-// the woman's face, so the Harbor hero and the Grid's two left-hand
-// Boulevard panels are panned up onto her face; the Grid's repeats also
-// get varied zooms so the same photo reads as different shots. Panels
-// not listed keep the centred default. Mirrored as PLACEMENTS in
+// The demo casts for the cover shot scenes: which sample (an index
+// into main.js's SAMPLES order — Boulevard, Marina, Neon, Moto, Pier,
+// Gold) fills each panel, so no demo cover ever repeats a person.
+// Harbor leads with the Boulevard close-up and seats the rest of the
+// cast around her, the Grid shows all six, Key Art leads with the
+// gold-dress shot, and Banner mixes the marina, the pier and the neon
+// street. Every panel is then framed on its photo's stored focal point
+// (the face), so no crop ever slices a face. Mirrored as DEMO_CAST in
 // tools/make_screenshots.py, which draws the shipped screenshots.
-export const SCENE_PLACEMENTS = {
-  harbor: {
-    0: { panX: 0, panY: 0.74, zoom: 1 },
-  },
-  grid: {
-    0: { panX: 0, panY: 0.69, zoom: 1 },
-    2: { panX: -0.08, panY: 0.49, zoom: 1.25 },
-    4: { panX: 0, panY: 0, zoom: 1.15 },
-    5: { panX: 0.1, panY: 0.29, zoom: 1.3 },
-  },
+export const DEMO_CAST = {
+  harbor: [0, 1, 2, 3, 4],
+  grid: [0, 1, 2, 3, 4, 5],
+  keyart: [5, 0, 2],
+  banner: [1, 4, 2],
+};
+
+// Demo zooms per layout and panel index, on top of the focal framing:
+// the Harbor hero is a close-up, so it pushes in on the face; the Key
+// Art hero leans in a little. Panels not listed sit at natural zoom.
+export const DEMO_ZOOM = {
+  harbor: { 0: 1.45 },
+  keyart: { 0: 1.12 },
 };
 
 export function markShotReady() {

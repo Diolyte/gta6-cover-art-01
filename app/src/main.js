@@ -7,8 +7,8 @@ import {
   LAYOUTS, GRADES, LAYOUT_ORDER, GRADE_ORDER, DEFAULT_TAGLINE, defaultPanels, bboxOf,
 } from './design.js';
 import { drawCover, panelAt } from './render.js';
-import { detailCentroid, panForCentroid } from './autoframe.js';
-import { shotScene, markShotReady, SCENE_PLACEMENTS } from './shots.js';
+import { framePoint, panForCentroid, panForFocal } from './autoframe.js';
+import { shotScene, markShotReady, DEMO_CAST, DEMO_ZOOM } from './shots.js';
 
 const EXPORTS = [
   { label: 'PNG · 1080 × 1080', w: 1080, h: 1080 },
@@ -20,16 +20,24 @@ const ASPECTS = [
   { label: '4 : 5', w: 1080, h: 1350 },
   { label: '16 : 9', w: 1920, h: 1080 },
 ];
+// The bundled cast: six sample photos, six different people. Each
+// carries the name the cover's name tags bill them under and a focal
+// point — the face, as fractions of the photo's width and height —
+// that every panel crop is framed on, so no panel ever cuts a face.
 const SAMPLES = [
-  { name: 'Boulevard', src: 'samples/boulevard.jpg' },
-  { name: 'Pier', src: 'samples/pier.jpg' },
+  { name: 'Mara Voss', src: 'samples/boulevard.jpg', focal: { fx: 0.60, fy: 0.22 } },
+  { name: 'Sofía Reyes', src: 'samples/marina.jpg', focal: { fx: 0.56, fy: 0.30 } },
+  { name: 'Roxy Delgado', src: 'samples/neon.jpg', focal: { fx: 0.58, fy: 0.31 } },
+  { name: 'Jax Moreno', src: 'samples/moto.jpg', focal: { fx: 0.49, fy: 0.26 } },
+  { name: 'Elias Brandt', src: 'samples/pier.jpg', focal: { fx: 0.40, fy: 0.27 } },
+  { name: 'Valentina Cruz', src: 'samples/gold.jpg', focal: { fx: 0.52, fy: 0.28 } },
 ];
 
 const query = new URLSearchParams(location.search);
 const shot = query.get('shot');
 
 const state = {
-  photos: [], // { name, img }
+  photos: [], // { name, img, focal } — focal is { fx, fy } or null
   layoutId: 'harbor',
   gradeId: 'neonharbor', // the default look: Harbor + Neon Harbor grade, frame off
   goldFrame: false,
@@ -57,6 +65,7 @@ function renderScene() {
     captionPos: state.captionPos,
     panels: state.panels.map((p) => ({
       img: p.photo >= 0 && state.photos[p.photo] ? state.photos[p.photo].img : null,
+      name: p.photo >= 0 && state.photos[p.photo] ? state.photos[p.photo].name : '',
       panX: p.panX,
       panY: p.panY,
       zoom: p.zoom,
@@ -87,37 +96,67 @@ function render() {
     : '';
 }
 
+// Frame one panel on its photo's focal point (the face), at the
+// panel's current zoom: the pan that centres the face, which the
+// renderer clamps so the photo still covers the panel. Photos without
+// a focal point (uploads) keep the centred default. The canvas is
+// already fitted to the current aspect when this runs, and the pan is
+// a fraction of the panel's box, so it holds at every export size of
+// the same aspect.
+function frameOnFocal(panel, index) {
+  const photo = panel && state.photos[panel.photo];
+  if (!photo || !photo.focal) return;
+  const rel = bboxOf(LAYOUTS[state.layoutId].panels[index]);
+  const box = {
+    x: rel.x * canvas.width, y: rel.y * canvas.height,
+    w: rel.w * canvas.width, h: rel.h * canvas.height,
+  };
+  const pan = panForFocal(photo.img, box, panel.zoom, photo.focal);
+  panel.panX = pan.panX;
+  panel.panY = pan.panY;
+}
+
 function rebuildPanels() {
+  fitCanvas();
   state.panels = defaultPanels(state.layoutId, state.photos.length);
   if (shot === 'cover') {
-    // Cover shot scenes carry focal fixes (shots.js) so the faces the
-    // samples lead with stay in frame at the shot's aspect, matching
-    // the shipped screenshots.
-    const fixes = SCENE_PLACEMENTS[state.layoutId];
-    if (fixes) {
+    // Cover shot scenes seat the demo cast (shots.js): a fixed,
+    // repetition-free arrangement with its demo zooms, matching the
+    // shipped screenshots.
+    const cast = DEMO_CAST[state.layoutId];
+    if (cast) {
       state.panels.forEach((panel, i) => {
-        const fix = fixes[i];
-        if (fix) {
-          panel.panX = fix.panX;
-          panel.panY = fix.panY;
-          panel.zoom = fix.zoom;
-        }
+        if (cast[i] !== undefined) panel.photo = cast[i];
+      });
+    }
+    const zooms = DEMO_ZOOM[state.layoutId];
+    if (zooms) {
+      state.panels.forEach((panel, i) => {
+        if (zooms[i]) panel.zoom = zooms[i];
       });
     }
   }
+  // Every panel is framed on its photo's face, demo scene or not.
+  state.panels.forEach((panel, i) => frameOnFocal(panel, i));
   state.selected = 0;
   render();
 }
 
 // ------------------------------------------------------------ photos
 
-function addPhoto(name, img) {
-  state.photos.push({ name, img });
+function addPhoto(name, img, focal = null) {
+  state.photos.push({ name, img, focal });
   if (state.panels.length === 0) {
     rebuildPanels();
   } else {
-    // Panels built before any photo existed get the new arrivals in order.
-    state.panels.forEach((p, i) => { if (p.photo < 0) p.photo = i % state.photos.length; });
+    // Panels built before any photo existed get the new arrivals in
+    // order, each framed on its face as it lands.
+    state.panels.forEach((p, i) => {
+      if (p.photo < 0) {
+        p.photo = i % state.photos.length;
+        frameOnFocal(p, i);
+      }
+    });
     render();
   }
   buildThumbs();
@@ -126,7 +165,7 @@ function addPhoto(name, img) {
 function loadSample(sample) {
   return new Promise((resolve) => {
     const img = new Image();
-    img.onload = () => { addPhoto(sample.name, img); resolve(); };
+    img.onload = () => { addPhoto(sample.name, img, sample.focal); resolve(); };
     img.onerror = () => resolve();
     img.src = sample.src;
   });
@@ -150,6 +189,7 @@ function buildThumbs() {
       const panel = state.panels[state.selected];
       if (panel) {
         panel.photo = i;
+        frameOnFocal(panel, state.selected);
         render();
       }
     });
@@ -242,7 +282,10 @@ $('autoframe').addEventListener('click', () => {
     x: rel.x * canvas.width, y: rel.y * canvas.height,
     w: rel.w * canvas.width, h: rel.h * canvas.height,
   };
-  const pan = panForCentroid(photo.img, box, panel.zoom, detailCentroid(photo.img));
+  // A photo with a stored focal point (the samples) frames exactly on
+  // its face; any other photo frames on its detail centroid.
+  const point = framePoint(photo.img, photo.focal);
+  const pan = panForCentroid(photo.img, box, panel.zoom, point);
   panel.panX = pan.panX;
   panel.panY = pan.panY;
   render();

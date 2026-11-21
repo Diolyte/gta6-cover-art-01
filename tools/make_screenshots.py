@@ -4,10 +4,11 @@
 This mirrors the web app (app/src/design.js + render.js) by hand: the same
 layout polygons in relative coordinates, the same grade washes and
 vignettes (the canvas filter strings approximated with PIL enhancers),
-the same striped chrome title, and the app's default scene — the two
-bundled samples cycling through the panels, panel 1 selected in the
-editor shot. Output goes to screenshots/ as JPEGs under the scorer's
-256 KiB cap.
+the same striped chrome title and poster furniture, and the app's demo
+scenes — each cover's demo cast (a different sample in every panel,
+each crop framed on the photo's stored focal point, the face), panel 1
+selected in the editor shot. Output goes to screenshots/ as JPEGs
+under the scorer's 256 KiB cap.
 
     python3 tools/make_screenshots.py
 """
@@ -15,7 +16,7 @@ editor shot. Output goes to screenshots/ as JPEGs under the scorer's
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAMPLE_DIR = os.path.join(ROOT, "app", "samples")
@@ -25,7 +26,22 @@ INK = (10, 10, 16)
 GOLD = (227, 185, 78)
 GOLD_DEEP = (154, 116, 31)
 CYAN = (62, 230, 255)
-TAGLINE = "LUCIA • JASON • CAL"
+TAGLINE = "MARA • JAX • VALENTINA"
+
+# Poster furniture, mirroring design.js: the review strip's pull-quote,
+# the billing block's credits lines and the seal's ring lettering.
+REVIEW_STARS = "★★★★★"
+REVIEW_QUOTE = "A SUNSET YOU CAN SPEED THROUGH."
+REVIEW_SOURCE = "THE HARBOR GAZETTE"
+BILLING = [
+    "VICE HEAT STUDIO presents a NEON HARBOR PICTURES production “VICE HEAT”",
+    "MARA VOSS · JAX MORENO · VALENTINA CRUZ · SOFÍA REYES · ROXY DELGADO · ELIAS BRANDT",
+    "music by THE PALM TAPES · edited by R. OKAFOR · photography L. IBARRA · written by C. FERRANTE · directed by A. SOLANO",
+]
+SEAL_RING = "VICE HEAT STUDIO • ORIGINAL KEY ART • "
+SEAL_CENTER = "EST. 2026"
+BILLING_FS = 0.0145  # billing type size, in u = min(w, h)
+BILLING_LH = 1.5     # billing line height, in type sizes
 
 # ------------------------------------------------------------------ design
 # The same tables as app/src/design.js.
@@ -122,11 +138,37 @@ TAG_FONT = font_path("liberation/LiberationSans-Bold.ttf", "dejavu/DejaVuSans-Bo
 UI_BOLD = font_path("liberation/LiberationSans-Bold.ttf", "dejavu/DejaVuSans-Bold.ttf")
 UI_FONT = font_path("liberation/LiberationSans-Regular.ttf", "dejavu/DejaVuSans.ttf")
 UI_TITLE = font_path("liberation/LiberationSans-BoldItalic.ttf", "dejavu/DejaVuSans-Bold.ttf")
+# Liberation Sans has no ★ glyph; DejaVu Sans does. Used for the review
+# strip's stars and the seal's centre star only.
+STAR_FONT = font_path("dejavu/DejaVuSans-Bold.ttf", "liberation/LiberationSans-Bold.ttf")
 
-SAMPLES = [
-    Image.open(os.path.join(SAMPLE_DIR, "boulevard.jpg")).convert("RGB"),
-    Image.open(os.path.join(SAMPLE_DIR, "pier.jpg")).convert("RGB"),
+# The bundled cast, in main.js's SAMPLES order: (file, name tag, editor
+# thumb label, focal point). The focal point is the face, as fractions
+# of the photo's width and height; every panel crop is framed on it.
+SAMPLE_META = [
+    ("boulevard.jpg", "Mara Voss", "Mara", (0.60, 0.22)),
+    ("marina.jpg", "Sofía Reyes", "Sofía", (0.56, 0.30)),
+    ("neon.jpg", "Roxy Delgado", "Roxy", (0.58, 0.31)),
+    ("moto.jpg", "Jax Moreno", "Jax", (0.49, 0.26)),
+    ("pier.jpg", "Elias Brandt", "Elias", (0.40, 0.27)),
+    ("gold.jpg", "Valentina Cruz", "Valentina", (0.52, 0.28)),
 ]
+SAMPLES = [Image.open(os.path.join(SAMPLE_DIR, meta[0])).convert("RGB")
+           for meta in SAMPLE_META]
+
+# The demo casts, mirroring DEMO_CAST in app/src/shots.js: which sample
+# fills each panel of a demo cover, so no cover repeats a person.
+DEMO_CAST = {
+    "harbor": [0, 1, 2, 3, 4],
+    "grid": [0, 1, 2, 3, 4, 5],
+    "keyart": [5, 0, 2],
+    "banner": [1, 4, 2],
+}
+# Demo zooms, mirroring DEMO_ZOOM: the Harbor hero is a close-up.
+DEMO_ZOOM = {
+    "harbor": {0: 1.45},
+    "keyart": {0: 1.12},
+}
 
 # ------------------------------------------------------------------ helpers
 
@@ -184,6 +226,30 @@ def paste_panel(base, poly, img, pan_x=0.0, pan_y=0.0, zoom=1.0):
     base.paste(layer, (0, 0), mask)
 
 
+def pan_for_focal(img, bw, bh, zoom, focal):
+    """The pan that centres a photo's focal point (its face) in a panel
+    of bw x bh pixels: mirrors autoframe.js's panForCentroid with the
+    stored focal point standing in for the computed centroid.
+    paste_panel clamps it so the photo always covers the panel."""
+    fx, fy = focal
+    s = max(bw / img.width, bh / img.height) * zoom
+    return (img.width * s * (0.5 - fx)) / bw, (img.height * s * (0.5 - fy)) / bh
+
+
+def panel_placement(layout_id, poly, size, panel_index):
+    """(sample index, pan_x, pan_y, zoom) for one demo panel: the demo
+    cast's photo, framed on its focal point at the demo zoom."""
+    w, h = size
+    sample_i = DEMO_CAST[layout_id][panel_index]
+    img = SAMPLES[sample_i]
+    xs = [p[0] for p in poly]
+    ys = [p[1] for p in poly]
+    bw, bh = (max(xs) - min(xs)) * w, (max(ys) - min(ys)) * h
+    zoom = DEMO_ZOOM.get(layout_id, {}).get(panel_index, 1.0)
+    pan_x, pan_y = pan_for_focal(img, bw, bh, zoom, SAMPLE_META[sample_i][3])
+    return sample_i, pan_x, pan_y, zoom
+
+
 def stroke_panel(draw, poly, size, heavy=False):
     w, h = size
     u = min(w, h)
@@ -231,8 +297,10 @@ def draw_tracked(draw, cx, base, text, font, tracking, fill, stroke_width=0, str
         x += cw + tracking
 
 
-def draw_title(base, caption, tagline, pos):
-    """The striped retro-chrome title, mirroring render.js's drawTitle."""
+def draw_title(base, caption, tagline, pos, inset=0.0):
+    """The striped retro-chrome title, mirroring render.js's drawTitle.
+    `inset` is the billing block's reserved height: a bottom title
+    rests above it."""
     text = caption.strip().upper()
     if not text:
         return
@@ -259,7 +327,7 @@ def draw_title(base, caption, tagline, pos):
     if pos == "top":
         base_y = h * 0.035 + size * 0.92
     else:
-        base_y = h * 0.965 - (size * 0.5 if has_tag else size * 0.16)
+        base_y = h * 0.965 - inset - (size * 0.5 if has_tag else size * 0.16)
     cx = w / 2
 
     # extrusion: dark copies stepping down from the face
@@ -293,50 +361,200 @@ def draw_title(base, caption, tagline, pos):
                      stroke_fill=(10, 4, 20))
 
 
+# ------------------------------------------------------- poster furniture
+# Mirrors render.js's furniture: name tags, the billing block, the
+# review strip and the studio seal, in the same sizes and positions.
+
+def billing_inset(w, h):
+    """The height the billing block reserves along the bottom edge."""
+    u = min(w, h)
+    return BILLING_FS * BILLING_LH * len(BILLING) * u + 0.016 * h
+
+
+def draw_tracked_left(draw, x, base_y, text, font, tracking, fill):
+    """Left-aligned tracked text, drawn glyph by glyph on a baseline;
+    returns the x just past the last glyph."""
+    for ch in text:
+        draw.text((x, base_y), ch, font=font, fill=fill, anchor="ls")
+        x += draw.textlength(ch, font=font) + tracking
+    return x
+
+
+def tracked_width(draw, text, font, tracking):
+    if not text:
+        return 0
+    return sum(draw.textlength(ch, font=font) for ch in text) + tracking * (len(text) - 1)
+
+
+def draw_name_tag(base, poly, name):
+    """One panel's name tag: the star's name in tracked warm-white caps
+    on a soft dark plate along the panel's bottom edge, clipped to the
+    panel. Panels too small for a legible tag are skipped."""
+    if not name:
+        return
+    w, h = base.size
+    u = min(w, h)
+    pts = [(x * w, y * h) for x, y in poly]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    bx, by = min(xs), min(ys)
+    bw, bh = max(xs) - bx, max(ys) - by
+    if bh < 0.10 * u or bw < 0.12 * u:
+        return
+    fs = min(bh * 0.115, u * 0.024)
+    plate_h = fs * 2.0
+    # The plate hugs the panel's bottom edge, unless that would run
+    # into the billing block's reserved strip — then it rests just
+    # above it, so a name tag never collides with the small print.
+    plate_bottom = by + bh - bh * 0.045
+    limit = h - billing_inset(w, h) - 0.006 * h
+    if plate_bottom > limit:
+        plate_bottom = limit
+    plate_y = plate_bottom - plate_h
+    top = plate_y - fs * 0.7
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    grad = v_gradient(max(2, round(bw) + 4), max(2, round(by + bh - top)),
+                      [(0, (4, 4, 10, 0.0)), (0.45, (4, 4, 10, 0.62)), (1, (4, 4, 10, 0.80))])
+    layer.alpha_composite(grad, (round(bx) - 2, round(top)))
+    font = ImageFont.truetype(TAG_FONT, round(fs))
+    draw_tracked(ImageDraw.Draw(layer), bx + bw / 2, plate_y + fs * 1.34,
+                 name.strip().upper(), font, fs * 0.22, (243, 233, 200))
+    # Clip the finished tag to the panel: fold the polygon into the
+    # layer's own alpha, then composite (a plain paste would lay the
+    # layer's transparent black over the photo).
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).polygon(pts, fill=255)
+    layer.putalpha(ImageChops.multiply(layer.split()[3], mask))
+    base.alpha_composite(layer)
+
+
+def draw_billing(base):
+    """The billing block: production, cast and credits in tiny tracked
+    caps, centred along the bottom edge over a soft dark band."""
+    w, h = base.size
+    u = min(w, h)
+    fs = BILLING_FS * u
+    lh = fs * BILLING_LH
+    band_top = h - billing_inset(w, h) - 0.012 * h
+    band = v_gradient(w, max(2, round(h - band_top)),
+                      [(0, (0, 0, 0, 0.0)), (1, (0, 0, 0, 0.55))])
+    base.alpha_composite(band, (0, round(band_top)))
+    draw = ImageDraw.Draw(base)
+    # shrink to fit: the longest credits line must clear the cover's
+    # width, or the small print runs off the edges of narrow covers
+    while fs > 6:
+        font = ImageFont.truetype(TAG_FONT, round(fs))
+        widest = max(tracked_width(draw, line, font, fs * 0.14) for line in BILLING)
+        if widest <= w * 0.96:
+            break
+        fs *= 0.96
+    font = ImageFont.truetype(TAG_FONT, round(fs))
+    lh = fs * BILLING_LH
+    for i, line in enumerate(BILLING):
+        base_y = h - 0.010 * h - (len(BILLING) - 1 - i) * lh - fs * 0.22
+        draw_tracked(draw, w / 2, base_y, line, font, fs * 0.14, (238, 234, 244))
+
+
+def draw_review_strip(base, pos, inset):
+    """The review strip: five gold stars and one pull-quote on a slim
+    dark band, on the edge the caption does not take."""
+    w, h = base.size
+    u = min(w, h)
+    fs = u * 0.021
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    quote_text = f"  “{REVIEW_QUOTE}” — {REVIEW_SOURCE}"
+    while fs > 8:
+        font = ImageFont.truetype(TAG_FONT, round(fs))
+        star_font = ImageFont.truetype(STAR_FONT, round(fs))
+        total = tracked_width(probe, REVIEW_STARS, star_font, fs * 0.06) \
+            + tracked_width(probe, quote_text, font, fs * 0.06)
+        if total <= w * 0.94:
+            break
+        fs *= 0.94
+    font = ImageFont.truetype(TAG_FONT, round(fs))
+    star_font = ImageFont.truetype(STAR_FONT, round(fs))
+    band_h = fs * 2.7
+    y = 0.010 * h if pos == "bottom" else h - inset - band_h - 0.012 * h
+    band = v_gradient(w, max(2, round(band_h)),
+                      [(0, (4, 4, 10, 0.0)), (0.25, (4, 4, 10, 0.58)),
+                       (0.75, (4, 4, 10, 0.58)), (1, (4, 4, 10, 0.0))])
+    base.alpha_composite(band, (0, round(y)))
+    draw = ImageDraw.Draw(base)
+    tracking = fs * 0.06
+    total = tracked_width(draw, REVIEW_STARS, star_font, tracking) \
+        + tracked_width(draw, quote_text, font, tracking)
+    x = w / 2 - total / 2
+    base_y = y + band_h / 2 + fs * 0.36
+    x = draw_tracked_left(draw, x, base_y, REVIEW_STARS, star_font, tracking, GOLD)
+    draw_tracked_left(draw, x, base_y, quote_text, font, tracking, (245, 242, 234))
+
+
+def draw_seal(base, inset):
+    """The studio seal: a gold-ringed round badge in the bottom-left
+    corner above the billing block, lettered like a film seal. (The
+    left corner keeps it clear of the name tags, which are centred in
+    their panels and run wide in the narrow right-hand ones.)"""
+    w, h = base.size
+    u = min(w, h)
+    r = u * 0.054
+    cx = r + 0.018 * u
+    cy = h - inset - r - 0.012 * h
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(8, 6, 16, 217),
+                 outline=GOLD + (255,), width=max(1, round(0.0035 * u)))
+    rr = r * 0.78
+    draw.ellipse([cx - rr, cy - rr, cx + rr, cy + rr],
+                 outline=GOLD + (255,), width=max(1, round(0.0016 * u)))
+    ring_fs = r * 0.205
+    ring_font = ImageFont.truetype(TAG_FONT, round(ring_fs))
+    n = len(SEAL_RING)
+    for i, ch in enumerate(SEAL_RING):
+        a = -math.pi / 2 + (i / n) * 2 * math.pi
+        x = cx + math.cos(a) * r * 0.885
+        y = cy + math.sin(a) * r * 0.885
+        cell = round(ring_fs * 2.4)
+        glyph = Image.new("RGBA", (cell, cell), (0, 0, 0, 0))
+        ImageDraw.Draw(glyph).text((cell / 2, cell / 2), ch, font=ring_font,
+                                   fill=GOLD + (255,), anchor="mm")
+        glyph = glyph.rotate(-(math.degrees(a) + 90), resample=Image.BICUBIC,
+                             center=(cell / 2, cell / 2))
+        layer.alpha_composite(glyph, (round(x - cell / 2), round(y - cell / 2)))
+    draw = ImageDraw.Draw(layer)
+    draw.text((cx, cy - r * 0.12), "★",
+              font=ImageFont.truetype(STAR_FONT, round(r * 0.5)),
+              fill=(245, 242, 234), anchor="mm")
+    draw.text((cx, cy + r * 0.40), SEAL_CENTER,
+              font=ImageFont.truetype(TAG_FONT, round(r * 0.19)),
+              fill=GOLD, anchor="mm")
+    base.alpha_composite(layer)
+
+
 # ------------------------------------------------------------------ covers
 
-# Per-panel focal fixes for the screenshot scenes, mirroring
-# SCENE_PLACEMENTS in app/src/shots.js: (pan_x, pan_y, zoom) per panel
-# index, in the app's placement terms. The wide panels' centred crop
-# slices the Boulevard portrait through the woman's face, so the Harbor
-# hero and the Grid's two left-hand Boulevard panels are panned up onto
-# her face; the Grid's repeats also get varied zooms so the same photo
-# reads as different shots. Panels not listed keep the centred default.
-PLACEMENTS = {
-    "harbor": {0: (0.0, 0.74, 1.0)},
-    "grid": {
-        0: (0.0, 0.69, 1.0),
-        2: (-0.08, 0.49, 1.25),
-        4: (0.0, 0.0, 1.15),
-        5: (0.10, 0.29, 1.30),
-    },
-}
-
-
 def render_cover(w, h, layout_id, grade_id, caption, tagline=TAGLINE, pos="bottom",
-                 selected=-1, gold_frame=False, placements=None):
+                 selected=-1, gold_frame=False):
     layout = LAYOUTS[layout_id]
     grade = GRADES[grade_id]
     graded = [apply_grade(img, grade) for img in SAMPLES]
     base = Image.new("RGBA", (w, h), INK + (255,))
-    fixes = placements or {}
-
-    def fix(i):
-        return fixes.get(i, (0.0, 0.0, 1.0))
 
     # the Harbor hero's pop-out copy, over its soft shadow
     if layout["pop_out"] > 0 and layout["hero"] is not None:
-        hero_poly = layout["panels"][layout["hero"]]
+        hero = layout["hero"]
+        hero_poly = layout["panels"][hero]
         lifted = lifted_polygon(hero_poly, layout["pop_out"])
         shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         ImageDraw.Draw(shadow).polygon(
             [(x * w, y * h + 0.014 * h) for x, y in lifted], fill=(0, 0, 0, 140))
         shadow = shadow.filter(ImageFilter.GaussianBlur(max(1, 0.012 * min(w, h))))
         base.alpha_composite(shadow)
-        paste_panel(base, lifted, graded[layout["hero"] % len(graded)], *fix(layout["hero"]))
+        sample_i, pan_x, pan_y, zoom = panel_placement(layout_id, hero_poly, (w, h), hero)
+        paste_panel(base, lifted, graded[sample_i], pan_x, pan_y, zoom)
 
     for i, poly in enumerate(layout["panels"]):
-        paste_panel(base, poly, graded[i % len(graded)], *fix(i))
+        sample_i, pan_x, pan_y, zoom = panel_placement(layout_id, poly, (w, h), i)
+        paste_panel(base, poly, graded[sample_i], pan_x, pan_y, zoom)
     draw = ImageDraw.Draw(base)
     framed = layout["hero"] if layout["hero"] is not None else 0
     for i, poly in enumerate(layout["panels"]):
@@ -344,7 +562,15 @@ def render_cover(w, h, layout_id, grade_id, caption, tagline=TAGLINE, pos="botto
 
     base.alpha_composite(v_gradient(w, h, grade["wash"]))
     base.alpha_composite(vignette(w, h, grade["vignette"]))
-    draw_title(base, caption, tagline, pos)
+
+    # poster furniture over the graded art, then the title above it all
+    inset = billing_inset(w, h)
+    for i, poly in enumerate(layout["panels"]):
+        draw_name_tag(base, poly, SAMPLE_META[DEMO_CAST[layout_id][i]][1])
+    draw_billing(base)
+    draw_review_strip(base, pos, inset)
+    draw_seal(base, inset)
+    draw_title(base, caption, tagline, pos, inset)
 
     if selected >= 0:
         poly = layout["panels"][selected]
@@ -393,7 +619,7 @@ def render_editor(w, h):
     cover = render_cover(540, 540, "harbor", "neonharbor", "VICE HEAT", selected=0)
     img.paste(cover, (24, 124))
     draw.rounded_rectangle([24, 124, 564, 664], 8, outline=edge, width=1)
-    text((24, 678), "Panel 1 of 5 · Boulevard — drag on the cover to reposition it.",
+    text((24, 678), "Panel 1 of 5 · Mara Voss — drag on the cover to reposition it.",
          ImageFont.truetype(UI_FONT, 13), muted)
 
     # control panel
@@ -431,13 +657,12 @@ def render_editor(w, h):
     text((cx + cw / 2, y + 12), "Add your photos", ImageFont.truetype(UI_BOLD, 13), (255, 255, 255), anchor="mm")
     y += 30
     for i, sample in enumerate(SAMPLES):
-        thumb = sample.copy()
-        thumb.thumbnail((76, 44))
-        tx = cx + i * 86
+        thumb = ImageOps.fit(sample, (46, 40))
+        tx = cx + i * 52
         img.paste(thumb, (tx, y))
-        draw.rounded_rectangle([tx - 2, y - 2, tx + 78, y + 46], 6,
+        draw.rounded_rectangle([tx - 2, y - 2, tx + 48, y + 42], 6,
                                outline=CYAN if i == 0 else edge, width=2 if i == 0 else 1)
-        text((tx + 38, y + 50), ["Boulevard", "Pier"][i], ImageFont.truetype(UI_FONT, 11), muted, anchor="ma")
+        text((tx + 23, y + 46), SAMPLE_META[i][2], ImageFont.truetype(UI_FONT, 10), muted, anchor="ma")
     y += 62
     divider()
 
@@ -469,7 +694,7 @@ def render_editor(w, h):
     draw.line([(cx + 52, y + 8), (cx + cw, y + 8)], fill=edge, width=4)
     draw.ellipse([cx + 50, y + 1, cx + 64, y + 15], fill=GOLD)
     y += 20
-    button(cx, y, cw, 24, "Auto-frame on detail")
+    button(cx, y, cw, 24, "Auto-frame on the face")
     y += 29
     divider()
 
@@ -508,14 +733,16 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     # Range without repetition: the default Neon Harbor cover (frame off),
     # the editor, Key Art with the gold frame ON, and the Grid in a
-    # different grade (Neon Nights) with the frame off.
-    save_jpeg(render_cover(1280, 720, "harbor", "neonharbor", "VICE HEAT",
-                           placements=PLACEMENTS["harbor"]), "01-cover-landscape.jpg")
+    # different grade (Neon Nights) with the frame off. Every cover
+    # seats its demo cast — a different person in every panel, each
+    # framed on their face — and carries the poster furniture.
+    save_jpeg(render_cover(1280, 720, "harbor", "neonharbor", "VICE HEAT"),
+              "01-cover-landscape.jpg")
     save_jpeg(render_editor(1280, 720), "02-editor.jpg")
     save_jpeg(render_cover(1024, 1280, "keyart", "palm", "PALM DUSK", gold_frame=True),
               "03-cover-portrait.jpg")
-    save_jpeg(render_cover(1080, 1080, "grid", "neon", "NEON NIGHTS",
-                           placements=PLACEMENTS["grid"]), "04-cover-square.jpg")
+    save_jpeg(render_cover(1080, 1080, "keyart", "neon", "NEON NIGHTS"),
+              "04-cover-square.jpg")
 
 
 if __name__ == "__main__":

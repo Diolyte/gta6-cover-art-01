@@ -42,6 +42,23 @@ export function detailCentroid(img) {
   return { fx: sx / sum, fy: sy / sum };
 }
 
+// The point auto-frame should centre for a photo: its stored focal
+// point when it carries one — the bundled samples store the position of
+// the face, as fractions of the photo's width and height — and the
+// computed detail centroid for any other photo (uploads have no focal
+// point, so their busiest region is the best guess).
+export function framePoint(img, focal) {
+  return focal ?? detailCentroid(img);
+}
+
+// The pan that puts a stored focal point (a face) at the panel's centre:
+// the centroid maths below with the stored point standing in for the
+// computed one, so a face is never sliced by a panel edge when the panel
+// is wide or narrow enough to crop the photo.
+export function panForFocal(img, box, zoom, focal) {
+  return panForCentroid(img, box, zoom, { fx: focal.fx, fy: focal.fy });
+}
+
 // The pan that puts the detail centroid at the panel's centre, for a panel
 // described by its pixel bounding box. Mirrors render.photoPlacement's
 // maths: at cover zoom the image point fx lands at centre + pan - size/2 +
